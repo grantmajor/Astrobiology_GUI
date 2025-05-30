@@ -9,7 +9,9 @@ import seaborn as sns
 import plotly.express as px
 
 # Machine Learning Libraries and Modules
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.utils.validation import check_is_fitted
+from sklearn.exceptions import NotFittedError
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
@@ -23,7 +25,8 @@ from sklearn.model_selection import train_test_split, cross_val_score, RepeatedS
 from sklearn.ensemble import VotingClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, RocCurveDisplay, \
-    ConfusionMatrixDisplay
+    ConfusionMatrixDisplay, root_mean_squared_error, mean_absolute_error, mean_squared_error, \
+    mean_absolute_percentage_error
 from sklearn.manifold import TSNE
 from imblearn.over_sampling import SMOTE
 from sklearn.multiclass import OneVsRestClassifier
@@ -316,14 +319,30 @@ with tab4:
         X_sup = X_sup.replace([np.inf, -np.inf], np.nan).dropna(axis=0)
         X_sup = X.dropna()
 
+        options_sup = st.selectbox(label='Select Prediction Type',
+                                   options=['Classification',
+                                            'Regression'])
+
+
+
+
         elements_sup = st.multiselect("Select Explanatory Variables (default is all numerical columns):",
                                       X_sup.columns,
                                       placeholder='Choose Option',
                                       default=X_sup.columns,
                                       )
-
         y_sup = data
         y_sup = y_sup.dropna()
+
+        ohe_toggle = st.checkbox(label='Enable One-Hot-Encoding')
+
+        if ohe_toggle:
+            cat_features = data.select_dtypes(exlude=[np.number])
+            ohe = OneHotEncoder(categories = 'auto',
+                                sparse_output = False,
+                                handle_unknown = 'error',
+
+                                )
 
         #TODO: Make it so that the last column is the target variable automatically
         target_sup = st.selectbox('Choose Target',
@@ -341,10 +360,6 @@ with tab4:
 
         if target_sup in X_sup:
             st.warning("Overlapping target and explanatory variables detected.")
-
-        options_sup = st.selectbox(label='Select Prediction Type',
-                                   options=['Classification',
-                                            'Regression'])
 
         #BEGIN TRAIN TEST SPLIT SECTION -------------------------------------------------------------------
         train_proportion = st.number_input('Enter the Proportion of Data to be Allocated to Training.',
@@ -574,7 +589,8 @@ with tab4:
             #END RANDOM FOREST CLASSIFIER CODE ------------------------------------------------------------------
 
         #END CLASSIFICATION CODE ------------------------------------------------------------------------------------
-    selected_model.fit(X_train, y_train)
+    if not X_sup.empty and not y_sup.empty:
+        selected_model.fit(X_train, y_train)
 
     #BEGIN MODEL METRICS CODE -------------------------------------------------------------------------------
     with col2:
@@ -582,7 +598,7 @@ with tab4:
 
         # check box for showing model metrics
         if not X_sup.empty:
-            y_predictions = selected_model.predict(X_test)
+            y_pred = selected_model.predict(X_test)
             show_metrics_enabled = st.checkbox("Show Model Metrics")
         else:
             st.warning("Select explanatory variables to continue.")
@@ -591,52 +607,123 @@ with tab4:
             st.header("Model Performance Metrics")
 
             #BEGIN CLASSIFICATION REPORT CODE --------------------------------------------------------
-            class_report = classification_report(y_test, y_predictions, output_dict=False)
-            st.subheader("Classification Report:")
-            st.text(class_report)
+            class_report = classification_report(y_test, y_pred, output_dict = True)
+            st.subheader("Classification Report")
+            class_report = pd.DataFrame(class_report).transpose()
+            st.table(class_report)
 
             #END CLASSIFICATION REPORT CODE -----------------------------------------------------------
 
             #BEGIN CONFUSION MATRIX CODE --------------------------------------------------------------
             #Creates confusion matrix
-            conf_mat = confusion_matrix(y_test, y_predictions)
+            # Compute matrix
 
-            #Makes labels with number of each outcome
-            conf_mat_labels = [
+            st.subheader('Confusion Matrix')
+            conf_mat = confusion_matrix(y_test, y_pred)
+
+            # Define custom labels
+            conf_mat_labels = np.array([
                 f'True Negative\n{conf_mat[0, 0]}',
                 f'False Positive\n{conf_mat[0, 1]}',
                 f'False Negative\n{conf_mat[1, 0]}',
                 f'True Positive\n{conf_mat[1, 1]}'
-            ]
+            ]).reshape(2, 2)
 
-            #gets rid of imperfections in the figure
+            # Reset any existing figures
             plt.close('all')
 
-            #reshapes labels to 2x2 for confusion matrix labelling
-            conf_mat_labels = np.asarray(conf_mat_labels).reshape(2, 2)
-
-            #creates the figure
-            conf_mat_fig = sns.heatmap(conf_mat,
-                                       annot=conf_mat_labels,
-                                       fmt='',
-                                       cmap='Purples',
-                                       cbar=True)
+            # Create themed figure
+            fig, ax = plt.subplots(figsize=(6, 4))
+            fig.set_facecolor('#0e1117')
+            ax.set_facecolor('#0e1117')
 
 
-            #Makes a new section for the confusion matrix figure
-            st.subheader("Confusion Matrix:")
-            st.pyplot(conf_mat_fig.get_figure())
+            sns.heatmap(conf_mat,
+                        annot=conf_mat_labels,
+                        fmt='',
+                        cmap='Blues',
+                        cbar=True,
+                        linewidths=0.5,
+                        linecolor='#0e1117',
+                        ax=ax)
+
+            # Style text and axes
+            ax.set_title('Confusion Matrix', color='white')
+            ax.set_xlabel('Predicted', color='white')
+            ax.set_ylabel('Actual', color='white')
+            ax.tick_params(colors='white', labelsize=10)
+
+            # Style colorbar ticks
+            cbar = ax.collections[0].colorbar
+            cbar.ax.yaxis.set_tick_params(color='white')
+            plt.setp(cbar.ax.yaxis.get_ticklabels(), color='white')
+
+            fig.tight_layout()
+            st.pyplot(fig)
+
             st.divider()
         #END CONFUSION MATRIX CODE -----------------------------------------------------------------
+
+
+        elif show_metrics_enabled and options_sup == 'Regression':
+            try:
+                check_is_fitted(selected_model)
+            except NotFittedError as e:
+                st.error('Model has not been fitted. Model metrics cannot be calculated.')
+
+            # BEGIN REGRESSION LOSS FUNCTION CODE --------------------------------------------------------
+
+            y_pred = selected_model.predict(X_test)
+            MSE = mean_squared_error(y_test, y_pred)
+            RMSE = root_mean_squared_error(y_test, y_pred)
+            MAE = mean_absolute_error(y_test, y_pred)
+            MAPE = mean_absolute_percentage_error(y_test, y_pred)
+
+            reg_metrics = pd.DataFrame([{'Mean Squared Error': MSE,
+                                              'Root Mean Squared Error': RMSE,
+                                              'Mean Absolute Error': MAE,
+                                              'Mean Absolute Percentage Error': MAPE}])
+
+            st.dataframe(reg_metrics, hide_index=True)
+
+            #END REGRESSION LOSS FUNCTION CODE ------------------------------------------------------------
+
+
+            #BEGIN ACTUAL v PREDICTED GRAPH CODE --------------------------------------------------------------
+            fig, ax = plt.subplots()
+            fig.set_facecolor('#0e1117')
+            ax.set_facecolor('#0e1117')
+
+            # Scatter and reference line
+            ax.scatter(y_test, y_pred, color='deepskyblue', edgecolor='white', s=60, alpha=0.8)
+            ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()],
+                    'r--', lw=2, label='Perfect Prediction')
+
+            # Add legend and set text color manually
+            legend = ax.legend(facecolor='#0e1117', frameon=False)
+            for text in legend.get_texts():
+                text.set_color('white')
+
+            # Styling
+            ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.3)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.tick_params(colors='white', labelsize=10)
+            ax.set_title('Actual vs. Predicted', color='white')
+            ax.set_xlabel('Actual', color='white')
+            ax.set_ylabel('Predicted', color='white')
+
+            st.pyplot(fig)
+
+            #END ACTUAL V PREDICTED GRAPH CODE ------------------------------------------------------------------
+
 
         #BEGIN PREDICTION UPLOAD CODE --------------------------------------------------------------
         #Reads in data file that user wants predictions on
         if not X_sup.empty:
             predicting_data_file = st.file_uploader('Upload a file with values to be predicted.')
 
-            if predicting_data_file is None:
-                st.error('Need to upload a prediction file.')
-            else:
+            if predicting_data_file is not None:
                 data_load_state2 = st.text('Loading data....')
                 predicting_data = load_data(predicting_data_file, 10000)
                 data_load_state2.text('Done!')
